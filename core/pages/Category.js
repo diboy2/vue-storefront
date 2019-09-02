@@ -1,17 +1,21 @@
 import Vue from 'vue'
 import toString from 'lodash-es/toString'
+import config from 'config'
 
-import store from '@vue-storefront/store'
-import EventBus from '@vue-storefront/core/plugins/event-bus'
-import { baseFilterProductsQuery, buildFilterProductsQuery } from '@vue-storefront/store/helpers'
-import { htmlDecode } from '@vue-storefront/core/filters/html-decode'
 import i18n from '@vue-storefront/i18n'
-
+import store from '@vue-storefront/core/store'
+import EventBus from '@vue-storefront/core/compatibility/plugins/event-bus'
+import { baseFilterProductsQuery, buildFilterProductsQuery, isServer } from '@vue-storefront/core/helpers'
+import { htmlDecode } from '@vue-storefront/core/filters/html-decode'
+import { currentStoreView, localizedRoute } from '@vue-storefront/core/lib/multistore'
 import Composite from '@vue-storefront/core/mixins/composite'
+import { Logger } from '@vue-storefront/core/lib/logger'
+import { mapGetters, mapActions } from 'vuex'
+import onBottomScroll from '@vue-storefront/core/mixins/onBottomScroll'
 
 export default {
   name: 'Category',
-  mixins: [Composite],
+  mixins: [Composite, onBottomScroll],
   data () {
     return {
       pagination: {
@@ -19,11 +23,11 @@ export default {
         current: 0,
         enabled: false
       },
-      bottom: false,
       lazyLoadProductsOnscroll: true
     }
   },
   computed: {
+    ...mapGetters('category', ['getCurrentCategory', 'getCurrentCategoryProductQuery', 'getAllCategoryFilters', 'getCategoryBreadcrumbs', 'getCurrentCategoryPath']),
     products () {
       return this.$store.state.product.list.items
     },
@@ -34,141 +38,140 @@ export default {
       return this.$store.state.product.list.total
     },
     currentQuery () {
-      return this.$store.state.category.current_product_query
+      return this.getCurrentCategoryProductQuery
     },
     isCategoryEmpty () {
       return (!(this.$store.state.product.list.items) || this.$store.state.product.list.items.length === 0)
     },
     category () {
-      return this.$store.state.category.current
+      return this.getCurrentCategory
     },
     categoryName () {
-      return this.$store.state.category.current ? this.$store.state.category.current.name : ''
+      return this.getCurrentCategory ? this.getCurrentCategory.name : ''
     },
     categoryId () {
-      return this.$store.state.category.current ? this.$store.state.category.current.id : ''
+      return this.getCurrentCategory ? this.getCurrentCategory.id : ''
     },
     filters () {
-      return this.$store.state.category.filters
+      return this.getAllCategoryFilters
     },
     breadcrumbs () {
-      return this.$store.state.category.breadcrumbs
-    }
-  },
-  watch: {
-    '$route': 'validateRoute',
-    bottom (bottom) {
-      if (bottom) {
-        this.pullMoreProducts()
-      }
+      return this.getCategoryBreadcrumbs
     }
   },
   preAsyncData ({ store, route }) {
-    console.log('preAsyncData query setup')
-    store.state.category.current_product_query = {
+    Logger.log('preAsyncData query setup')()
+    const currentProductQuery = store.getters['category/getCurrentCategoryProductQuery']
+    const sort = currentProductQuery && currentProductQuery.sort ? currentProductQuery.sort : config.entities.productList.sort
+    store.dispatch('category/setSearchOptions', {
       populateAggregations: true,
       store: store,
       route: route,
       current: 0,
       perPage: 50,
-      sort: store.state.config.entities.productList.sort,
-      filters: store.state.config.products.defaultFilters,
-      includeFields: store.state.config.entities.optimize && Vue.prototype.$isServer ? store.state.config.entities.productList.includeFields : null,
-      excludeFields: store.state.config.entities.optimize && Vue.prototype.$isServer ? store.state.config.entities.productList.excludeFields : null,
+      sort,
+      filters: config.products.defaultFilters,
+      includeFields: config.entities.optimize && isServer ? config.entities.productList.includeFields : null,
+      excludeFields: config.entities.optimize && isServer ? config.entities.productList.excludeFields : null,
       append: false
+    })
+  },
+  async asyncData ({ store, route, context }) { // this is for SSR purposes to prefetch data
+    Logger.info('Entering asyncData in Category Page (core)')()
+    try {
+      if (context) context.output.cacheTags.add(`category`)
+      const defaultFilters = config.products.defaultFilters
+      store.dispatch('category/resetFilters')
+      EventBus.$emit('filter-reset')
+      await store.dispatch('attribute/list', { // load filter attributes for this specific category
+        filterValues: defaultFilters, // TODO: assign specific filters/ attribute codes dynamicaly to specific categories
+        includeFields: config.entities.optimize && isServer ? config.entities.attribute.includeFields : null
+      })
+      const parentCategory = await store.dispatch('category/single', { key: config.products.useMagentoUrlKeys ? 'url_key' : 'slug', value: route.params.slug })
+      let query = store.getters['category/getCurrentCategoryProductQuery']
+      if (!query.searchProductQuery) {
+        store.dispatch('category/mergeSearchOptions', {
+          searchProductQuery: baseFilterProductsQuery(parentCategory, defaultFilters)
+        })
+      }
+      const subloaders = await store.dispatch('category/products', query)
+      if (subloaders) {
+        await Promise.all(subloaders)
+        await EventBus.$emitFilter('category-after-load', { store: store, route: route })
+      } else {
+        throw new Error('Category query returned empty result')
+      }
+    } catch (err) {
+      Logger.error(err)()
+      throw err
     }
   },
-  asyncData ({ store, route, context }) { // this is for SSR purposes to prefetch data
-    return new Promise((resolve, reject) => {
-      console.log('Entering asyncData for Category root ' + new Date())
-      if (context) context.output.cacheTags.add(`category`)
-      const defaultFilters = store.state.config.products.defaultFilters
-      store.dispatch('category/list', { includeFields: store.state.config.entities.optimize && Vue.prototype.$isServer ? store.state.config.entities.category.includeFields : null }).then((categories) => {
-        store.dispatch('attribute/list', { // load filter attributes for this specific category
-          filterValues: defaultFilters, // TODO: assign specific filters/ attribute codes dynamicaly to specific categories
-          includeFields: store.state.config.entities.optimize && Vue.prototype.$isServer ? store.state.config.entities.attribute.includeFields : null
-        }).catch(err => {
-          console.error(err)
-          reject(err)
-        }).then((attrs) => {
-          store.dispatch('category/single', { key: 'slug', value: route.params.slug }).then((parentCategory) => {
-            let query = store.state.category.current_product_query
-            if (!query.searchProductQuery) {
-              query = Object.assign(query, { searchProductQuery: baseFilterProductsQuery(parentCategory, defaultFilters) })
-            }
-            store.dispatch('category/products', query).then((subloaders) => {
-              if (subloaders) {
-                Promise.all(subloaders).then((results) => {
-                  EventBus.$emitFilter('category-after-load', { store: store, route: route }).then((results) => {
-                    return resolve()
-                  }).catch((err) => {
-                    console.error(err)
-                    return resolve()
-                  })
-                }).catch(err => {
-                  console.error(err)
-                  reject(err)
-                })
-              } else {
-                const err = new Error('Category query returned empty result')
-                console.error(err)
-                reject(err)
-              }
-            }).catch(err => {
-              console.error(err)
-              reject(err)
-            })
-          }).catch(err => {
-            console.error(err)
-            reject(err)
+  async beforeRouteEnter (to, from, next) {
+    if (!isServer && !from.name) { // Loading category products to cache on SSR render
+      next(vm => {
+        const defaultFilters = config.products.defaultFilters
+        let parentCategory = store.getters['category/getCurrentCategory']
+        let query = store.getters['category/getCurrentCategoryProductQuery']
+        if (!query.searchProductQuery) {
+          store.dispatch('category/mergeSearchOptions', {
+            searchProductQuery: baseFilterProductsQuery(parentCategory, defaultFilters),
+            cacheOnly: true// this is cache only request
           })
-        })
-      }).catch(err => {
-        console.error(err)
-        reject(err)
+        }
+        store.dispatch('category/products', query)
       })
-    })
+    } else {
+      next()
+    }
   },
   beforeMount () {
     this.$bus.$on('filter-changed-category', this.onFilterChanged)
     this.$bus.$on('list-change-sort', this.onSortOrderChanged)
-    if (store.state.config.usePriceTiers) {
+    if (config.usePriceTiers) {
       this.$bus.$on('user-after-loggedin', this.onUserPricesRefreshed)
       this.$bus.$on('user-after-logout', this.onUserPricesRefreshed)
-    }
-    if (!Vue.prototype.$isServer && this.lazyLoadProductsOnscroll) {
-      window.addEventListener('scroll', () => {
-        this.bottom = this.bottomVisible()
-      })
     }
   },
   beforeDestroy () {
     this.$bus.$off('list-change-sort', this.onSortOrderChanged)
     this.$bus.$off('filter-changed-category', this.onFilterChanged)
-    if (store.state.config.usePriceTiers) {
+    if (config.usePriceTiers) {
       this.$bus.$off('user-after-loggedin', this.onUserPricesRefreshed)
       this.$bus.$off('user-after-logout', this.onUserPricesRefreshed)
     }
   },
+  beforeRouteUpdate (to, from, next) {
+    this.validateRoute(to)
+    next()
+  },
   methods: {
+    ...mapActions('category', ['mergeSearchOptions']),
+    onBottomScroll () {
+      this.pullMoreProducts()
+    },
     bottomVisible () {
-      const scrollY = window.scrollY
+      const scrollY = Math.ceil(window.scrollY)
       const visible = window.innerHeight
       const pageHeight = document.documentElement.scrollHeight
       const bottomOfPage = visible + scrollY >= pageHeight
       return bottomOfPage || pageHeight < visible
     },
     pullMoreProducts () {
-      let currentQuery = this.currentQuery
-      currentQuery.append = true
-      currentQuery.route = this.$route
-      currentQuery.store = this.$store
-      currentQuery.current = currentQuery.current + currentQuery.perPage
-      this.pagination.current = currentQuery.current
-      this.pagination.perPage = currentQuery.perPage
-      if (currentQuery.current <= this.productsTotal) {
-        currentQuery.searchProductQuery = buildFilterProductsQuery(this.category, this.filters.chosen)
-        return this.$store.dispatch('category/products', currentQuery)
+      if (typeof navigator !== 'undefined' && !navigator.onLine) return
+      let current = this.getCurrentCategoryProductQuery.current + this.getCurrentCategoryProductQuery.perPage
+      this.mergeSearchOptions({
+        append: true,
+        route: this.$route,
+        store: this.$store,
+        current
+      })
+      this.pagination.current = this.getCurrentCategoryProductQuery.current
+      this.pagination.perPage = this.getCurrentCategoryProductQuery.perPage
+      if (this.getCurrentCategoryProductQuery.current <= this.productsTotal) {
+        this.mergeSearchOptions({
+          searchProductQuery: buildFilterProductsQuery(this.category, this.filters.chosen)
+        })
+        return this.$store.dispatch('category/products', this.getCurrentCategoryProductQuery)
       }
     },
     onFilterChanged (filterOption) {
@@ -181,51 +184,53 @@ export default {
 
       let filterQr = buildFilterProductsQuery(this.category, this.filters.chosen)
 
-      const fsC = Object.assign({}, this.filters.chosen) // create a copy because it will be used asynchronously (take a look below)
-      this.$store.state.category.current_product_query = Object.assign(this.$store.state.category.current_product_query, {
+      const filtersConfig = Object.assign({}, this.filters.chosen) // create a copy because it will be used asynchronously (take a look below)
+      this.mergeSearchOptions({
         populateAggregations: false,
         searchProductQuery: filterQr,
         current: this.pagination.current,
         perPage: this.pagination.perPage,
-        configuration: fsC,
+        configuration: filtersConfig,
         append: false,
         includeFields: null,
         excludeFields: null
       })
-      this.$store.dispatch('category/products', this.$store.state.category.current_product_query).then((res) => {
+      this.$store.dispatch('category/products', this.getCurrentCategoryProductQuery).then((res) => {
       }) // because already aggregated
     },
     onSortOrderChanged (param) {
+      this.pagination.current = 0
       if (param.attribute) {
+        const filtersConfig = Object.assign({}, this.filters.chosen) // create a copy because it will be used asynchronously (take a look below)
         let filterQr = buildFilterProductsQuery(this.category, this.filters.chosen)
-        this.$store.state.category.current_product_query = Object.assign(this.$store.state.category.current_product_query, {
-          sort: param.attribute + ':' + param.direction,
+        this.mergeSearchOptions({
+          sort: param.attribute,
           searchProductQuery: filterQr,
-          append: false
+          current: this.pagination.current,
+          perPage: this.pagination.perPage,
+          configuration: filtersConfig,
+          append: false,
+          includeFields: null,
+          excludeFields: null
         })
-        this.$store.dispatch('category/products', this.$store.state.category.current_product_query).then((res) => {
+        this.$store.dispatch('category/products', this.getCurrentCategoryProductQuery).then((res) => {
         })
       } else {
-        this.$bus.$emit('notification', {
-          type: 'error',
-          message: i18n.t('Please select the field which You like to sort by'),
-          action1: { label: i18n.t('OK'), action: 'close' }
-        })
+        this.notify()
       }
     },
-    validateRoute () {
-      this.filters.chosen = {} // reset selected filters
+    validateRoute (route = this.$route) {
+      this.$store.dispatch('category/resetFilters')
       this.$bus.$emit('filter-reset')
 
-      this.$store.dispatch('category/single', { key: 'slug', value: this.$route.params.slug }).then(category => {
+      this.$store.dispatch('category/single', { key: config.products.useMagentoUrlKeys ? 'url_key' : 'slug', value: route.params.slug }).then(category => {
         if (!category) {
-          this.$router.push('/')
+          this.$router.push(this.localizedRoute('/'))
         } else {
           this.pagination.current = 0
-          let searchProductQuery = baseFilterProductsQuery(this.$store.state.category.current, store.state.config.products.defaultFilters)
-          this.$bus.$emit('current-category-changed', this.$store.state.category.current_path)
-          let query = this.$store.state.category.current_product_query
-          query = Object.assign(query, { // base prototype from the asyncData is being used here
+          let searchProductQuery = baseFilterProductsQuery(this.getCurrentCategory, config.products.defaultFilters)
+          this.$bus.$emit('current-category-changed', this.getCurrentCategoryPath)
+          this.mergeSearchOptions({ // base prototype from the asyncData is being used here
             current: this.pagination.current,
             perPage: this.pagination.perPage,
             store: this.$store,
@@ -233,35 +238,56 @@ export default {
             append: false,
             populateAggregations: true
           })
-          if (!query.searchProductQuery) {
-            query.searchProductQuery = searchProductQuery
+          if (!this.getCurrentCategoryProductQuery.searchProductQuery) {
+            this.mergeSearchOptions({
+              searchProductQuery
+            })
           }
-          this.$store.dispatch('category/products', this.$store.state.category.current_product_query)
-          EventBus.$emitFilter('category-after-load', { store: this.$store, route: this.$route })
+          this.$store.dispatch('category/products', this.getCurrentCategoryProductQuery)
+          this.$bus.$emitFilter('category-after-load', { store: this.$store, route: route })
+        }
+      }).catch(err => {
+        if (err.message.indexOf('query returned empty result') > 0) {
+          this.$store.dispatch('notification/spawnNotification', {
+            type: 'error',
+            message: i18n.t('The product, category or CMS page is not available in Offline mode. Redirecting to Home.'),
+            action1: { label: i18n.t('OK') }
+          })
+          this.$router.push(localizedRoute('/', currentStoreView().storeCode))
         }
       })
     },
     onUserPricesRefreshed () {
-      const defaultFilters = store.state.config.products.defaultFilters
+      const defaultFilters = config.products.defaultFilters
       this.$store.dispatch('category/single', {
-        key: 'slug',
+        key: config.products.useMagentoUrlKeys ? 'url_key' : 'slug',
         value: this.$route.params.slug
       }).then((parentCategory) => {
-        let query = this.$store.state.category.current_product_query
-        if (!query.searchProductQuery) {
-          query = Object.assign(query, {
+        if (!this.getCurrentCategoryProductQuery.searchProductQuery) {
+          this.mergeSearchOptions({
             searchProductQuery: baseFilterProductsQuery(parentCategory, defaultFilters),
             skipCache: true
           })
         }
-        this.$store.dispatch('category/products', query)
+        this.$store.dispatch('category/products', this.getCurrentCategoryProductQuery)
       })
     }
   },
   metaInfo () {
+    const storeView = currentStoreView()
     return {
-      title: htmlDecode(this.$route.meta.title || this.categoryName),
-      meta: this.$route.meta.description ? [{ vmid: 'description', description: htmlDecode(this.$route.meta.description) }] : []
+      link: [
+        { rel: 'amphtml',
+          href: this.$router.resolve(localizedRoute({
+            name: 'category-amp',
+            params: {
+              slug: this.category.slug
+            }
+          }, storeView.storeCode)).href
+        }
+      ],
+      title: htmlDecode(this.category.meta_title || this.categoryName),
+      meta: this.category.meta_description ? [{ vmid: 'description', name: 'description', content: htmlDecode(this.category.meta_description) }] : []
     }
   }
 }

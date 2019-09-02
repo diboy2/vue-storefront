@@ -5,5 +5,6 @@ export default interface Review {
   nickname: string,
   review_entity: string,
   review_status: number,
-  customer_id: number | null
+  customer_id?: number | null,
+  [k: string]: any
 }

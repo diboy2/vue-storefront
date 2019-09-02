@@ -23,33 +23,68 @@
       </label>
     </div>
 
-    <template v-if="validation">
-      <span
-        class="block cl-error h6 mt5"
-        v-if="validation.condition"
-      >
-        {{ validation.text }}
-      </span>
-    </template>
-
-    <template v-else-if="validations">
-      <span
-        v-for="(validation, index) in validations"
-        :key="index"
-        v-if="validation.condition"
-        class="block cl-error h6 mt5"
-      >
-        {{ validation.text }}
-      </span>
-    </template>
+    <ValidationMessages v-if="validations" :validations="validations" />
   </div>
 </template>
 
 <script>
-import BaseTextarea from '@vue-storefront/core/components/blocks/Form/BaseTextarea'
+import ValidationMessages from './ValidationMessages.vue'
 
 export default {
-  mixins: [BaseTextarea]
+  name: 'BaseTextarea',
+  components: {
+    ValidationMessages
+  },
+  data () {
+    return {
+      iconActive: false,
+      icon: 'visibility'
+    }
+  },
+  props: {
+    type: {
+      type: String,
+      required: true
+    },
+    value: {
+      type: [String, Number],
+      required: true
+    },
+    name: {
+      type: String,
+      required: false,
+      default: ''
+    },
+    placeholder: {
+      type: String,
+      required: false,
+      default: ''
+    },
+    autocomplete: {
+      type: String,
+      required: false,
+      default: ''
+    },
+    focus: {
+      type: Boolean,
+      required: false,
+      default: false
+    },
+    autofocus: {
+      type: Boolean,
+      required: false,
+      default: false
+    },
+    validations: {
+      type: Array,
+      default: () => []
+    }
+  },
+  mounted () {
+    if (this.focus) {
+      this.$refs[this.name].focus()
+    }
+  }
 }
 </script>
 

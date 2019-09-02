@@ -1,6 +1,7 @@
 .DS_Store
 node_modules/
 dist/
+*.icloud
 npm-debug.log
 .vscode/
 .idea/
@@ -8,9 +9,9 @@ config/local.json
 var
 build/config.json
 core/build/config.json
+core/build/cache-version.json
 theme.js
 desktop.ini
-*.extension.json
 src/themes/catalog/resource/i18n.json
 src/themes/default/resource/i18n.json
 yarn-error.log
@@ -28,3 +29,7 @@ core/resource/i18n/nl-NL.json
 core/resource/i18n/pl-PL.json
 core/resource/i18n/pt-BR.json
 core/resource/i18n/ru-RU.json
+*.iml
+
+#unit testing
+/test/unit/coverage

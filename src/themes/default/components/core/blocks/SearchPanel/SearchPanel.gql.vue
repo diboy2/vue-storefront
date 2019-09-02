@@ -1,5 +1,5 @@
 <template>
-  <div class="searchpanel fixed mw-100 bg-cl-primary cl-accent" :class="{ active: isOpen }">
+  <div class="searchpanel fixed mw-100 bg-cl-primary cl-accent" :class="{ active: showPanel }">
     <div class="row">
       <div class="col-md-12 end-xs">
         <i class="material-icons p15 pointer cl-accent" @click="closeSearchpanel">close</i>
@@ -16,6 +16,7 @@
         class="mr20 py10 brdr-none brdr-bottom-1 brdr-cl-primary no-outline h4"
         :placeholder="$t('Type what you are looking for...')"
         type="text"
+        autofocus="true"
       >
     </div>
     <ApolloQuery
@@ -24,7 +25,7 @@
     >
       <template slot-scope="{ result: { loading, error, data } }">
         <div v-if="data" class="col-md-12 product-listing pl35 pt20 row">
-          <product-tile @click.native="closeSearchpanel" :key="Product.id" v-for="Product in data.ProductList" :product="Product"/>
+          <product-tile @click.native="closeSearchpanel" :key="Product.id" v-for="Product in data.ProductList" :product="Product" />
           <transition name="fade">
             <div v-if="error" class="no-results relative center-xs h4">
               {{ $t('No results were found.') }}
@@ -37,7 +38,7 @@
 </template>
 
 <script>
-import SearchPanel from 'core/components/blocks/SearchPanel/SearchPanel'
+import SearchPanel from '@vue-storefront/core/compatibility/components/blocks/SearchPanel/SearchPanel'
 import ProductTile from 'theme/components/core/ProductTile'
 
 export default {
@@ -45,13 +46,6 @@ export default {
     ProductTile
   },
   mixins: [SearchPanel],
-  mounted () {
-    this.$bus.$on('focusSearchInput', () => {
-      if (!this.$store.state.ui.searchpanel) {
-        this.$refs.search.focus()
-      }
-    })
-  },
   data () {
     return {
       query: ''

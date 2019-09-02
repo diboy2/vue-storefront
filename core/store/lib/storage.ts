@@ -1,10 +1,37 @@
 import Vue from 'vue'
 import * as localForage from 'localforage'
+import { Logger } from '@vue-storefront/core/lib/logger'
+import { isServer } from '@vue-storefront/core/helpers'
 
 const CACHE_TIMEOUT = 800
 const CACHE_TIMEOUT_ITERATE = 2000
-const DISABLE_PERSISTANCE_AFTER = 2
+const DISABLE_PERSISTANCE_AFTER = 1
 const DISABLE_PERSISTANCE_AFTER_SAVE = 30
+
+function roughSizeOfObject (object) {
+  const objectList = []
+  const stack = [ object ]
+  let bytes = 0
+  while (stack.length) {
+    const value = stack.pop()
+    if (typeof value === 'boolean') {
+      bytes += 4
+    } else if (typeof value === 'string') {
+      bytes += value.length * 2
+    } else if (typeof value === 'number') {
+      bytes += 8
+    } else if (
+      typeof value === 'object' &&
+      objectList.indexOf(value) === -1
+    ) {
+      objectList.push(value)
+      for (var i in value) {
+        stack.push(value[ i ])
+      }
+    }
+  }
+  return bytes
+}
 
 class LocalForageCacheDriver {
   private _collectionName: string;
@@ -16,29 +43,63 @@ class LocalForageCacheDriver {
   private _useLocalCacheByDefault: boolean;
   private cacheErrorsCount: any;
   private localCache: any;
+  private _storageQuota: number;
 
-  constructor (collection, useLocalCacheByDefault = true) {
+  public constructor (collection, useLocalCacheByDefault = true, storageQuota = 0) {
     const collectionName = collection._config.storeName
     const dbName = collection._config.name
+    this._storageQuota = storageQuota
+
+    if (this._storageQuota && !isServer) {
+      const storageQuota = this._storageQuota
+      const iterateFnc = this.iterate.bind(this)
+      const removeItemFnc = this.removeItem.bind(this)
+      setInterval(() => {
+        let storageSize = 0
+        this.iterate((item, id, number) => {
+          storageSize += roughSizeOfObject(item)
+        }, (err, result) => { // eslint-disable-line handle-callback-err
+          if ((storageSize / 1024) > storageQuota) {
+            Logger.info('Clearing out the storage ', 'cache', { storageSizeKB: Math.round(storageSize / 1024), storageQuotaKB: storageQuota })()
+            const howManyItemsToRemove = 100
+            const keysPurged = []
+            iterateFnc((item, id, number) => {
+              if (number < howManyItemsToRemove) {
+                removeItemFnc(id)
+                keysPurged.push(id)
+              }
+            }, (err, result) => { // eslint-disable-line handle-callback-err
+              Logger.info('Cache purged', 'cache', { keysPurged })()
+            })
+          } else {
+            Logger.info('Storage size', 'cache', { storageSizeKB: Math.round(storageSize / 1024) })()
+          }
+        })
+      }, 30000)
+    }
     if (typeof this.cacheErrorsCount === 'undefined') {
       this.cacheErrorsCount = {}
     }
     if (typeof this.cacheErrorsCount[collectionName] === 'undefined') {
       this.cacheErrorsCount[collectionName] = 0
     }
-    if (typeof Vue.prototype.$localCache === 'undefined') {
-      Vue.prototype.$localCache = {}
-    }
-    if (typeof Vue.prototype.$localCache[dbName] === 'undefined') {
-      Vue.prototype.$localCache[dbName] = {}
-    }
-    if (typeof Vue.prototype.$localCache[dbName][collectionName] === 'undefined') {
-      Vue.prototype.$localCache[dbName][collectionName] = {}
+    if (isServer) {
+      this._localCache = {}
+    } else {
+      if (typeof Vue.prototype.$localCache === 'undefined') {
+        Vue.prototype.$localCache = {}
+      }
+      if (typeof Vue.prototype.$localCache[dbName] === 'undefined') {
+        Vue.prototype.$localCache[dbName] = {}
+      }
+      if (typeof Vue.prototype.$localCache[dbName][collectionName] === 'undefined') {
+        Vue.prototype.$localCache[dbName][collectionName] = {}
+      }
+      this._localCache = Vue.prototype.$localCache[dbName][collectionName]
     }
     this._collectionName = collectionName
     this._dbName = dbName
     this._useLocalCacheByDefault = useLocalCacheByDefault
-    this._localCache = Vue.prototype.$localCache[dbName][collectionName]
     this._localForageCollection = collection
     this._lastError = null
     this._persistenceErrorNotified = false
@@ -46,12 +107,12 @@ class LocalForageCacheDriver {
 
   // Remove all keys from the datastore, effectively destroying all data in
   // the app's key/value store!
-  clear (callback?) {
+  public clear (callback?) {
     return this._localForageCollection.clear(callback)
   }
 
   // Increment the database version number and recreate the context
-  recreateDb () {
+  public recreateDb () {
     if (this._localForageCollection._config) {
       const existingConfig = Object.assign({}, this._localForageCollection._config)
       if (existingConfig.storeName) {
@@ -62,7 +123,7 @@ class LocalForageCacheDriver {
         } else {
           this._localForageCollection = localForage.createInstance(existingConfig)
         }
-        console.log('DB recreated with', existingConfig, destVersionNumber)
+        Logger.log('DB recreated with', existingConfig, destVersionNumber)()
       }
     }
   }
@@ -70,11 +131,11 @@ class LocalForageCacheDriver {
   // Retrieve an item from the store. Unlike the original async_storage
   // library in Gaia, we don't modify return values at all. If a key's value
   // is `undefined`, we pass that value to the callback function.
-  getItem (key, callback?) {
+  public getItem (key, callback?) {
     const isCallbackCallable = (typeof callback !== 'undefined' && callback)
     let isResolved = false
     if (this._useLocalCacheByDefault && this._localCache[key]) {
-      // console.debug('Local cache fallback for GET', key)
+      // Logger.debug('Local cache fallback for GET', key)()
       return new Promise((resolve, reject) => {
         const value = typeof this._localCache[key] !== 'undefined' ? this._localCache[key] : null
         if (isCallbackCallable) callback(null, value)
@@ -82,10 +143,10 @@ class LocalForageCacheDriver {
       })
     }
 
-    if (!Vue.prototype.$isServer) {
+    if (!isServer) {
       if (this.cacheErrorsCount[this._collectionName] >= DISABLE_PERSISTANCE_AFTER && this._useLocalCacheByDefault) {
         if (!this._persistenceErrorNotified) {
-          console.error('Persistent cache disabled becasue of previous errors [get]', key)
+          Logger.error('Persistent cache disabled becasue of previous errors [get]', key)()
           this._persistenceErrorNotified = true
         }
         return new Promise((resolve, reject) => {
@@ -94,13 +155,13 @@ class LocalForageCacheDriver {
         })
       } else {
         const startTime = new Date().getTime()
-        // console.debug('No local cache fallback for GET', key)
+        // Logger.debug('No local cache fallback for GET', key)()
         const promise = this._localForageCollection.ready().then(() => this._localForageCollection.getItem(key).then(result => {
           const endTime = new Date().getTime()
           if ((endTime - startTime) >= CACHE_TIMEOUT) {
-            console.error('Cache promise resolved after [ms]', key, (endTime - startTime))
+            Logger.error('Cache promise resolved after [ms]' + key + (endTime - startTime))()
           }
-          if (!this._localCache[key]) {
+          if (!this._localCache[key] && result) {
             this._localCache[key] = result // populate the local cache for the next call
           }
           if (!isResolved) {
@@ -109,7 +170,7 @@ class LocalForageCacheDriver {
             }
             isResolved = true
           } else {
-            console.debug('Skipping return value as it was previously resolved')
+            Logger.debug('Skipping return value as it was previously resolved')()
           }
           return result
         }).catch(err => {
@@ -117,14 +178,14 @@ class LocalForageCacheDriver {
           if (!isResolved) {
             if (isCallbackCallable) callback(null, typeof this._localCache[key] !== 'undefined' ? this._localCache[key] : null)
           }
-          console.error(err)
+          Logger.error(err)()
           isResolved = true
         }))
 
         setTimeout(() => {
           if (!isResolved) { // this is cache time out check
             if (!this._persistenceErrorNotified) {
-              console.error('Cache not responding within ' + CACHE_TIMEOUT + ' ms for [get]', key, this.cacheErrorsCount[this._collectionName])
+              Logger.error('Cache not responding for ' + key + '.', 'cache', { timeout: CACHE_TIMEOUT, errorsCount: this.cacheErrorsCount[this._collectionName] })()
               this._persistenceErrorNotified = true
               this.recreateDb()
             }
@@ -144,12 +205,12 @@ class LocalForageCacheDriver {
   }
 
   // Iterate over all items in the store.
-  iterate (iterator, callback?) {
+  public iterate (iterator, callback?) {
     const isIteratorCallable = (typeof iterator !== 'undefined' && iterator)
     const isCallbackCallable = (typeof callback !== 'undefined' && callback)
     let globalIterationNumber = 1
     if (this._useLocalCacheByDefault) {
-      // console.debug('Local cache iteration')
+      // Logger.debug('Local cache iteration')()
       for (const localKey in this._localCache) {
         if (isIteratorCallable) {
           iterator(this._localCache[localKey], localKey, globalIterationNumber)
@@ -166,7 +227,7 @@ class LocalForageCacheDriver {
             iterator(value, key, globalIterationNumber)
             globalIterationNumber++
           } else {
-            // console.debug('Skipping iteration key because local cache executed', key)
+            // Logger.debug('Skipping iteration key because local cache executed', key)()
           }
         } else {
           iterator(value, key, iterationNumber)
@@ -177,7 +238,7 @@ class LocalForageCacheDriver {
       isResolved = true
     })).catch(err => {
       this._lastError = err
-      console.error(err)
+      Logger.error(err)()
       if (!isResolved) {
         isResolved = true
         if (isCallbackCallable) callback(err, null)
@@ -186,7 +247,7 @@ class LocalForageCacheDriver {
     setTimeout(() => {
       if (!isResolved) { // this is cache time out check
         if (!this._persistenceErrorNotified) {
-          console.error('Cache not responding within ' + CACHE_TIMEOUT_ITERATE + ' ms for [iterate]', this.cacheErrorsCount[this._collectionName])
+          Logger.error('Cache not responding. (iterate)', 'cache', { timeout: CACHE_TIMEOUT, errorsCount: this.cacheErrorsCount[this._collectionName] })()
           this._persistenceErrorNotified = true
           this.recreateDb()
         }
@@ -198,21 +259,21 @@ class LocalForageCacheDriver {
   }
 
   // Same as localStorage's key() method, except takes a callback.
-  key (n, callback?) {
+  public key (n, callback?) {
     return this._localForageCollection.key(n, callback)
   }
 
-  keys (callback?) {
+  public keys (callback?) {
     return this._localForageCollection.keys(callback)
   }
 
   // Supply the number of keys in the datastore to the callback function.
-  length (callback?) {
+  public length (callback?) {
     return this._localForageCollection.length(callback)
   }
 
   // Remove an item from the store, nice and simple.
-  removeItem (key, callback?) {
+  public removeItem (key, callback?) {
     if (typeof this._localCache[key] !== 'undefined') {
       delete this._localCache[key]
     }
@@ -223,13 +284,19 @@ class LocalForageCacheDriver {
   // Unlike Gaia's implementation, the callback function is passed the value,
   // in case you want to operate on that value only after you're sure it
   // saved, or something like that.
-  setItem (key, value, callback?) {
+  public setItem (key, value, callback?, memoryOnly = false) {
     const isCallbackCallable = (typeof callback !== 'undefined' && callback)
     this._localCache[key] = value
-    if (!Vue.prototype.$isServer) {
+    if (memoryOnly) {
+      return new Promise((resolve, reject) => {
+        if (isCallbackCallable) callback(null, null)
+        resolve(null)
+      })
+    }
+    if (!isServer) {
       if (this.cacheErrorsCount[this._collectionName] >= DISABLE_PERSISTANCE_AFTER_SAVE && this._useLocalCacheByDefault) {
         if (!this._persistenceErrorNotified) {
-          console.error('Persistent cache disabled becasue of previous errors [set]', key)
+          Logger.error('Persistent cache disabled becasue of previous errors [set]', key)()
           this._persistenceErrorNotified = true
         }
         return new Promise((resolve, reject) => {
@@ -250,7 +317,7 @@ class LocalForageCacheDriver {
         setTimeout(() => {
           if (!isResolved) { // this is cache time out check
             if (!this._persistenceErrorNotified) {
-              console.error('Cache not responding within ' + CACHE_TIMEOUT + ' ms for [set]', key, this.cacheErrorsCount[this._collectionName])
+              Logger.error('Cache not responding for ' + key + '.', 'cache', { timeout: CACHE_TIMEOUT, errorsCount: this.cacheErrorsCount[this._collectionName] })()
               this._persistenceErrorNotified = true
               this.recreateDb()
             }

@@ -39,7 +39,7 @@
           </header>
           <div class="row center-xs">
             <div v-for="product in ourBestsellersCollection" :key="product.id" class="col-md-3">
-              <product-tile :product="product"/>
+              <product-tile :product="product" />
             </div>
           </div>
         </section>
@@ -64,7 +64,6 @@ export default {
   },
   methods: {
     toggleSearchpanel () {
-      this.$bus.$emit('focusSearchInput')
       this.$store.commit('ui/setSearchpanel', true)
     }
   },

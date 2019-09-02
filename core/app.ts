@@ -1,127 +1,133 @@
+import { Store } from 'vuex'
+import RootState from '@vue-storefront/core/types/RootState'
 import Vue from 'vue'
-import { sync } from 'vuex-router-sync'
-import VueObserveVisibility from 'vue-observe-visibility'
-import { union } from 'lodash-es'
-import buildTimeConfig from 'config'
+import { isServer } from '@vue-storefront/core/helpers'
+
+// Plugins
+import i18n from '@vue-storefront/i18n'
+import VueRouter from 'vue-router'
 import VueLazyload from 'vue-lazyload'
 import Vuelidate from 'vuelidate'
 import Meta from 'vue-meta'
+import { sync } from 'vuex-router-sync'
+import VueObserveVisibility from 'vue-observe-visibility'
 
-import router from '@vue-storefront/core/router'
-import { registerTheme, plugins, mixins, filters } from '@vue-storefront/core/lib/themes'
-import registerExtensions from '@vue-storefront/core/lib/extensions'
-import i18n from '@vue-storefront/i18n'
+// Apollo GraphQL client
+import { getApolloProvider } from './scripts/resolvers/resolveGraphQL'
 
-import store from '@vue-storefront/store'
-import coreModules from '@vue-storefront/store/modules'
-import { prepareStoreView } from '@vue-storefront/store/lib/multistore'
+// TODO simplify by removing global mixins, plugins and filters - it can be done in normal 'vue' way
+import { registerTheme } from '@vue-storefront/core/lib/themes'
+import { themeEntry } from 'theme/index.js'
+import { registerModules } from '@vue-storefront/core/lib/module'
+import { prepareStoreView, currentStoreView } from '@vue-storefront/core/lib/multistore'
 
-import App from 'theme/App.vue'
-import themeModules from 'theme/store'
-import themeExtensionEntryPoints from 'theme/extensions'
-import extensionEntryPoints from 'src/extensions'
+import * as coreMixins from '@vue-storefront/core/mixins'
+import * as coreFilters from '@vue-storefront/core/filters'
+import * as corePlugins from '@vue-storefront/core/compatibility/plugins'
 
-// Declare Apollo graphql client
-import ApolloClient from 'apollo-client'
-import { HttpLink } from 'apollo-link-http'
-import { InMemoryCache } from 'apollo-cache-inmemory'
-import VueApollo from 'vue-apollo'
+import { once } from '@vue-storefront/core/helpers'
+import store from '@vue-storefront/core/store'
 
-import { takeOverConsole } from '@vue-storefront/core/helpers/log'
-if (buildTimeConfig.console.verbosityLevel !== 'display-everything') {
-  takeOverConsole(buildTimeConfig.console.verbosityLevel)
-}
+import { enabledModules } from './modules-entry'
 
-export function createApp (ssrContext, config): { app: Vue, router: any, store: any } {
-  sync(store, router)
-  store.state.version = '1.4.0'
-  store.state.config = config
-  store.state.__DEMO_MODE__ = (config.demomode === true) ? true : false
+// Will be deprecated in 1.8
+import { registerExtensions } from '@vue-storefront/core/compatibility/lib/extensions'
+import { registerExtensions as extensions } from 'src/extensions'
+import globalConfig from 'config'
 
-  if(ssrContext) Vue.prototype.$ssrRequestContext = ssrContext
-
-  if (!store.state.config) store.state.config = buildTimeConfig // if provided from SSR, don't replace it
-  const storeModules = Object.assign(coreModules, themeModules || {})
-  
-  for (const moduleName of Object.keys(storeModules)) {
-    console.debug('Registering Vuex module', moduleName)
-    store.registerModule(moduleName, storeModules[moduleName])
-  }
-  
-  const storeView = prepareStoreView(null) // prepare the default storeView
-  store.state.storeView = storeView
-  // store.state.shipping.methods = shippingMethods
-  
-  Vue.use(Vuelidate)
-  Vue.use(VueLazyload, {attempt: 2})
-  Vue.use(Meta)
-  Vue.use(VueObserveVisibility)
-  
-  require('theme/plugins')
-  const pluginsObject = plugins()
-  Object.keys(pluginsObject).forEach(key => {
-    Vue.use(pluginsObject[key])
-  })
-  
-  const mixinsObject = mixins()
-  Object.keys(mixinsObject).forEach(key => {
-    Vue.mixin(mixinsObject[key])
-  })
-  
-  const filtersObject = filters()
-  Object.keys(filtersObject).forEach(key => {
-    Vue.filter(key, filtersObject[key])
-  })
-    const httpLink = new HttpLink({
-      uri: store.state.config.graphql.host.indexOf('://') >= 0 ? store.state.config.graphql.host : (store.state.config.server.protocol + '://' + store.state.config.graphql.host + ':' + store.state.config.graphql.port + '/graphql')
-    })
-  
-  const apolloClient = new ApolloClient({
-    link: httpLink,
-    cache: new InMemoryCache(),
-    connectToDevTools: true
-  })
-  
-  let loading = 0
-  
-  const apolloProvider = new VueApollo({
-    clients: {
-        a: apolloClient
-    },
-    defaultClient: apolloClient,
-    defaultOptions: {
-        // $loadingKey: 'loading',
-    },
-    watchLoading (state, mod) {
-        loading += mod
-        console.log('Global loading', loading, mod)
-    },
-    errorHandler (error) {
-        console.log('Global error handler')
-        console.error(error)
+function createRouter (): VueRouter {
+  return new VueRouter({
+    mode: 'history',
+    base: __dirname,
+    scrollBehavior: (to, from, savedPosition) => {
+      if (to.hash) {
+        return {
+          selector: to.hash
+        }
+      }
+      if (savedPosition) {
+        return savedPosition
+      } else {
+        return {x: 0, y: 0}
+      }
     }
   })
-  
-  Vue.use(VueApollo)
-  // End declare Apollo graphql client    
-  const app = new Vue({
+}
+
+let router: VueRouter = null
+
+once('__VUE_EXTEND_RR__', () => {
+  Vue.use(VueRouter)
+})
+
+const createApp = async (ssrContext, config, storeCode = null): Promise<{app: Vue, router: VueRouter, store: Store<RootState>}> => {
+  router = createRouter()
+  // sync router with vuex 'router' store
+  sync(store, router)
+  // TODO: Don't mutate the state directly, use mutation instead
+  store.state.version = process.env.APPVERSION
+  store.state.config = config // @deprecated
+  store.state.__DEMO_MODE__ = (config.demomode === true)
+  if (ssrContext) Vue.prototype.$ssrRequestContext = ssrContext
+  if (!store.state.config) store.state.config = globalConfig //  @deprecated - we should avoid the `config`
+  const storeView = prepareStoreView(storeCode) // prepare the default storeView
+  store.state.storeView = storeView
+  // store.state.shipping.methods = shippingMethods
+
+  // to depreciate in near future
+  once('__VUE_EXTEND__', () => {
+    Vue.use(Vuelidate)
+    Vue.use(VueLazyload, {attempt: 2, preLoad: 1.5})
+    Vue.use(Meta)
+    Vue.use(VueObserveVisibility)
+
+    Object.keys(corePlugins).forEach(key => {
+      Vue.use(corePlugins[key])
+    })
+
+    Object.keys(coreMixins).forEach(key => {
+      Vue.mixin(coreMixins[key])
+    })
+  })
+
+  // @todo remove this part when we'll get rid of global multistore mixin
+  if (isServer) {
+    Object.defineProperty(ssrContext, 'helpers', {
+      value: {
+        currentStoreView
+      },
+      writable: true
+    })
+  }
+
+  Object.keys(coreFilters).forEach(key => {
+    Vue.filter(key, coreFilters[key])
+  })
+
+  let vueOptions = {
     router,
     store,
     i18n,
-    provide: apolloProvider,
-    render: h => h(App)
-  })
-  registerExtensions(
-    union(extensionEntryPoints, themeExtensionEntryPoints),
-    app,
-    router,
-    store,
-    store.state.config,
-    ssrContext
-  )
-  registerTheme(buildTimeConfig.theme, app, router, store, store.state.config, ssrContext)
+    render: h => h(themeEntry)
+  }
 
-  app.$emit('application-after-init', app)
+  const apolloProvider = await getApolloProvider()
+  if (apolloProvider) Object.assign(vueOptions, {provider: apolloProvider})
+
+  const app = new Vue(vueOptions)
+
+  const appContext = {
+    isServer,
+    ssrContext
+  }
+
+  registerModules(enabledModules, appContext)
+  registerExtensions(extensions, app, router, store, config, ssrContext)
+  registerTheme(globalConfig.theme, app, router, store, globalConfig, ssrContext)
+
+  Vue.prototype.$bus.$emit('application-after-init', app)
 
   return { app, router, store }
 }
+
+export { router, createApp }

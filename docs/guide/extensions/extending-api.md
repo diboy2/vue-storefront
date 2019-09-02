@@ -1,13 +1,14 @@
-## Extending the API
+# Extending the API
 
-Some extensions need to have additional API methods to get some data directly from Magento/other CMS or just from custom ElasticSearch data collections.
-You may add new ES collections [using the Migration mechanism](https://github.com/DivanteLtd/vue-storefront-api/blob/master/doc/1.%20Data%20schema%20and%20migrations.md)
+Some extensions need to have additional API methods to get some data directly from Magento/other CMS or just from custom Elasticsearch data collections.
 
-Then You may extend the [`vue-storefront-api`](https://github.com/DivanteLtd/vue-storefront-api) to add Your custom API methods. Please take a look at: [mailchimp-subscribe](https://github.com/DivanteLtd/vue-storefront-api/blob/master/src/api/extensions/mailchimp-subscribe/index.js) for reference.
+You may add new ES collections [using the Migration mechanism](../data/data-migrations.md)
+
+Then you may extend the [`vue-storefront-api`](https://github.com/DivanteLtd/vue-storefront-api) to add your custom API methods. Please take a look at: [mailchimp-subscribe](https://github.com/DivanteLtd/vue-storefront-api/blob/master/src/api/extensions/mailchimp-subscribe/index.js) for reference.
 
 To add the API extension to `vue-storefront-api`:
 
-1. Create the folder within `src/api/extensions` for example 'custom_extension`
+1. Create the folder within `src/api/extensions` for example 'custom_extension`.
 2. Then add the `index.js` file and put the API methods code inside. We're using Express.js. Here is a boilerplate/example for the extension code:
 
 ```js

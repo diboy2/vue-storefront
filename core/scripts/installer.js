@@ -20,7 +20,6 @@ const SOURCE_FRONTEND_CONFIG_FILE = 'config/default.json'
 const TARGET_BACKEND_CONFIG_FILE = 'config/local.json'
 const SOURCE_BACKEND_CONFIG_FILE = 'config/default.json'
 
-const STOREFRONT_GIT_URL = 'https://github.com/DivanteLtd/vue-storefront'
 const STOREFRONT_BACKEND_GIT_URL = 'https://github.com/DivanteLtd/vue-storefront-api'
 const MAGENTO_SAMPLE_DATA_GIT_URL = 'https://github.com/magento/magento2-sample-data.git'
 const STOREFRONT_REMOTE_BACKEND_URL = 'https://demo.vuestorefront.io'
@@ -31,6 +30,20 @@ const LOG_DIR = `${STOREFRONT_DIRECTORY}/var/log`
 const INSTALL_LOG_FILE = `${STOREFRONT_DIRECTORY}/var/log/install.log`
 const VUE_STOREFRONT_LOG_FILE = `${STOREFRONT_DIRECTORY}/var/log/vue-storefront.log`
 const VUE_STOREFRONT_BACKEND_LOG_FILE = `${STOREFRONT_DIRECTORY}/var/log/vue-storefront-api.log`
+
+/**
+ * Abstract class for field initialization
+ */
+class Abstract {
+  /**
+   * Constructor
+   *
+   * Initialize fields
+   */
+  constructor (answers) {
+    this.answers = answers
+  }
+}
 
 /**
  * Message management
@@ -110,20 +123,6 @@ class Message {
 }
 
 /**
- * Abstract class for field initialization
- */
-class Abstract {
-  /**
-   * Constructor
-   *
-   * Initialize fields
-   */
-  constructor (answers) {
-    this.answers = answers
-  }
-}
-
-/**
  * Scripts for initialization backend
  */
 class Backend extends Abstract {
@@ -192,14 +191,53 @@ class Backend extends Abstract {
    */
   dockerComposeUp () {
     return new Promise((resolve, reject) => {
-      Message.info('Starting docker in background...')
+      Message.info('Starting Docker in background...')
 
       if (shell.exec(`docker-compose up -d > /dev/null 2>&1`).code !== 0) {
-        reject(new Error('Can\'t start docker in background.'))
+        reject(new Error('Can\'t start Docker in background.'))
       }
       // Adding 20sec timer for ES to get up and running
       // before starting restoration and migration processes
       setTimeout(() => { resolve() }, 20000)
+    })
+  }
+
+  /**
+   * Validate Magento integration settings.
+   *
+   * @returns {Promise}
+   */
+  validateM2Integration () {
+    return new Promise((resolve, reject) => {
+      const Magento2Client = require('magento2-rest-client').Magento2Client
+
+      Message.info(`Validating Magento integration configuration...`)
+
+      let m2Url = urlParser(this.answers.m2_url).href
+      let apiUrl = urlParser(this.answers.m2_api_url).href
+
+      if (!m2Url.length) {
+        reject(new Error('Invalid Magento URL supplied.'))
+      }
+      if (!apiUrl.length) {
+        reject(new Error('Invalid Magento rest API URL supplied.'))
+      }
+
+      let options = {
+        'url': apiUrl,
+        'consumerKey': this.answers.m2_api_consumer_key,
+        'consumerSecret': this.answers.m2_api_consumer_secret,
+        'accessToken': this.answers.m2_api_access_token,
+        'accessTokenSecret': this.answers.m2_api_access_token_secret
+      }
+      let client = Magento2Client(options)
+
+      client.categories.list()
+        .then((categories) => {
+          resolve()
+        }).catch((e) => {
+          reject(new Error('Invalid Magento integration settings. Original error: ' + e))
+        })
     })
   }
 
@@ -223,6 +261,14 @@ class Backend extends Abstract {
         }
 
         config.imageable.whitelist.allowedHosts.push(host)
+
+        config.magento2.url = urlParser(this.answers.m2_url).href
+        config.magento2.imgUrl = this.answers.m2_url ? urlParser(this.answers.m2_url).href + '/pub/media/catalog/product' : config.magento2.imgUrl
+        config.magento2.api.url = urlParser(this.answers.m2_api_url).href || config.magento2.api.url
+        config.magento2.api.consumerKey = this.answers.m2_api_consumer_key || config.magento2.api.consumerKey
+        config.magento2.api.consumerSecret = this.answers.m2_api_consumer_secret || config.magento2.api.consumerSecret
+        config.magento2.api.accessToken = this.answers.m2_api_access_token || config.magento2.api.accessToken
+        config.magento2.api.accessTokenSecret = this.answers.m2_api_access_token_secret || config.magento2.api.accessTokenSecret
 
         jsonFile.writeFileSync(TARGET_BACKEND_CONFIG_FILE, config, {spaces: 2})
       } catch (e) {
@@ -268,7 +314,24 @@ class Backend extends Abstract {
   }
 
   /**
-   * Cloning magento sample data
+   * Run 'yarn mage2vs import'
+   *
+   * @returns {Promise}
+   */
+  importElasticSearch () {
+    return new Promise((resolve, reject) => {
+      Message.info('Importing data from Magento into ElasticSearch...')
+
+      if (shell.exec(`yarn mage2vs import >> ${Abstract.infoLogStream} 2>&1`).code !== 0) {
+        reject(new Error('Can\'t import data into ElasticSearch.'))
+      }
+
+      resolve()
+    })
+  }
+
+  /**
+   * Cloning Magento sample data
    *
    * @returns {Promise}
    */
@@ -293,8 +356,14 @@ class Backend extends Abstract {
     return new Promise((resolve, reject) => {
       Message.info('Starting backend server...')
 
-      if (shell.exec(`nohup npm run dev > ${Abstract.backendLogStream} 2>&1 &`).code !== 0) {
-        reject(new Error('Can\'t start dev server.', VUE_STOREFRONT_BACKEND_LOG_FILE))
+      if (isWindows()) {
+        if (shell.exec(`start /min npm run dev > ${Abstract.backendLogStream} 2>&1 &`).code !== 0) {
+          reject(new Error('Can\'t start dev server.', VUE_STOREFRONT_BACKEND_LOG_FILE))
+        }
+      } else {
+        if (shell.exec(`nohup npm run dev > ${Abstract.backendLogStream} 2>&1 &`).code !== 0) {
+          reject(new Error('Can\'t start dev server.', VUE_STOREFRONT_BACKEND_LOG_FILE))
+        }
       }
 
       resolve()
@@ -353,6 +422,7 @@ class Storefront extends Abstract {
           graphQlHost = backendPath.replace('https://', '').replace('http://', '')
         }
 
+        config.api.url = backendPath
         config.graphql.host = graphQlHost
         config.graphql.port = graphQlPort
         config.elasticsearch.host = `${backendPath}/api/catalog`
@@ -380,7 +450,9 @@ class Storefront extends Abstract {
         config.cart.applycoupon_endpoint = `${backendPath}/api/cart/apply-coupon?token={{token}}&cartId={{cartId}}&coupon={{coupon}}`
         config.reviews.create_endpoint = `${backendPath}/api/review/create?token={{token}}`
 
-        config.mailchimp.endpoint = `${backendPath}/api/ext/mailchimp-subscribe/subscribe`
+        config.newsletter.endpoint = `${backendPath}/api/ext/mailchimp-subscribe/subscribe`
+        config.mailer.endpoint.send = `${backendPath}/api/ext/mail-service/send-email`
+        config.mailer.endpoint.token = `${backendPath}/api/ext/mail-service/get-token`
         config.images.baseUrl = this.answers.images_endpoint
         config.cms.endpoint = `${backendPath}/api/ext/cms-data/cms{{type}}/{{cmsId}}`
         config.cms.endpointIdentifier = `${backendPath}/api/ext/cms-data/cms{{type}}Identifier/{{cmsIdentifier}}/storeId/{{storeId}}`
@@ -425,8 +497,14 @@ class Storefront extends Abstract {
     return new Promise((resolve, reject) => {
       Message.info('Starting storefront server...')
 
-      if (shell.exec(`nohup npm run dev >> ${Abstract.storefrontLogStream} 2>&1 &`).code !== 0) {
-        reject(new Error('Can\'t start storefront server.', VUE_STOREFRONT_LOG_FILE))
+      if (isWindows()) {
+        if (shell.exec(`start /min npm run dev >> ${Abstract.storefrontLogStream} 2>&1 &`).code !== 0) {
+          reject(new Error('Can\'t start storefront server.', VUE_STOREFRONT_LOG_FILE))
+        }
+      } else {
+        if (shell.exec(`nohup npm run dev >> ${Abstract.storefrontLogStream} 2>&1 &`).code !== 0) {
+          reject(new Error('Can\'t start storefront server.', VUE_STOREFRONT_LOG_FILE))
+        }
       }
 
       resolve(answers)
@@ -492,16 +570,26 @@ class Manager extends Abstract {
   initBackend () {
     if (this.answers.is_remote_backend === false) {
       Abstract.wasLocalBackendInstalled = true
-
-      return this.backend.cloneRepository()
-        .then(this.backend.goToDirectory.bind(this.backend))
-        .then(this.backend.npmInstall.bind(this.backend))
-        .then(this.backend.createConfig.bind(this.backend))
-        .then(this.backend.dockerComposeUp.bind(this.backend))
-        .then(this.backend.restoreElasticSearch.bind(this.backend))
-        .then(this.backend.migrateElasticSearch.bind(this.backend))
-        .then(this.backend.cloneMagentoSampleData.bind(this.backend))
-        .then(this.backend.runDevEnvironment.bind(this.backend))
+      if (this.answers.m2_api_oauth2 === true) {
+        return this.backend.validateM2Integration()
+          .then(this.backend.cloneRepository.bind(this.backend))
+          .then(this.backend.goToDirectory.bind(this.backend))
+          .then(this.backend.npmInstall.bind(this.backend))
+          .then(this.backend.createConfig.bind(this.backend))
+          .then(this.backend.dockerComposeUp.bind(this.backend))
+          .then(this.backend.importElasticSearch.bind(this.backend))
+          .then(this.backend.runDevEnvironment.bind(this.backend))
+      } else {
+        return this.backend.cloneRepository()
+          .then(this.backend.goToDirectory.bind(this.backend))
+          .then(this.backend.npmInstall.bind(this.backend))
+          .then(this.backend.createConfig.bind(this.backend))
+          .then(this.backend.dockerComposeUp.bind(this.backend))
+          .then(this.backend.restoreElasticSearch.bind(this.backend))
+          .then(this.backend.migrateElasticSearch.bind(this.backend))
+          .then(this.backend.cloneMagentoSampleData.bind(this.backend))
+          .then(this.backend.runDevEnvironment.bind(this.backend))
+      }
     } else {
       return Promise.resolve()
     }
@@ -517,19 +605,6 @@ class Manager extends Abstract {
       .then(this.storefront.createConfig.bind(this.storefront))
       .then(this.storefront.npmBuild.bind(this.storefront))
       .then(this.storefront.runDevEnvironment.bind(this.storefront))
-  }
-
-  /**
-   * Check user OS and shows error if not supported
-   */
-  static checkUserOS () {
-    if (isWindows()) {
-      Message.error([
-        'Unfortunately currently only Linux and OSX are supported.',
-        'To install vue-storefront on your mac please go threw manual installation process provided in documentation:',
-        `${STOREFRONT_GIT_URL}/blob/master/doc/Installing%20on%20Windows.md`
-      ])
-    }
   }
 
   /**
@@ -655,6 +730,82 @@ let questions = [
       // add extra slash as suffix if was not set
       return url.slice(-1) === '/' ? url : `${url}/`
     }
+  },
+  {
+    type: 'input',
+    name: 'm2_url',
+    message: 'Please provide your Magento url',
+    default: 'http://demo-magento2.vuestorefront.io',
+    when: function (answers) {
+      return answers.is_remote_backend === false
+    }
+  },
+  {
+    type: 'confirm',
+    name: 'm2_api_oauth2',
+    message: `Would You like to perform initial data import from Magento2 instance?`,
+    default: false,
+    when: function (answers) {
+      return answers.is_remote_backend === false
+    }
+  },
+  {
+    type: 'input',
+    name: 'm2_api_url',
+    message: 'Please provide the URL to your Magento rest API',
+    default: 'http://demo-magento2.vuestorefront.io/rest',
+    when: function (answers) {
+      return answers.m2_api_oauth2 === true
+    },
+    filter: function (url) {
+      let prefix = 'http://'
+      let prefixSsl = 'https://'
+
+      url = url.trim()
+
+      // add http:// if no protocol set
+      if (url.substr(0, prefix.length) !== prefix && url.substr(0, prefixSsl.length) !== prefixSsl) {
+        url = prefix + url
+      }
+
+      return url
+    }
+  },
+  {
+    type: 'input',
+    name: 'm2_api_consumer_key',
+    message: 'Please provide your consumer key',
+    default: 'byv3730rhoulpopcq64don8ukb8lf2gq',
+    when: function (answers) {
+      return answers.m2_api_oauth2 === true
+    }
+  },
+  {
+    type: 'input',
+    name: 'm2_api_consumer_secret',
+    message: 'Please provide your consumer secret',
+    default: 'u9q4fcobv7vfx9td80oupa6uhexc27rb',
+    when: function (answers) {
+      return answers.m2_api_oauth2 === true
+    }
+  },
+  {
+    type: 'input',
+    name: 'm2_api_access_token',
+    message: 'Please provide your access token',
+    default: '040xx3qy7s0j28o3q0exrfop579cy20m',
+    when: function (answers) {
+      return answers.m2_api_oauth2 === true
+    }
+  },
+  {
+    type: 'input',
+    name: 'm2_api_access_token_secret',
+    message: 'Please provide your access token secret',
+    default: '7qunl3p505rubmr7u1ijt7odyialnih9',
+    when: function (answers) {
+      return answers.m2_api_oauth2 === true
+    }
   }
 ]
 
@@ -680,11 +831,6 @@ Abstract.storefrontLogStream = '/dev/null'
 Abstract.backendLogStream = '/dev/null'
 
 if (require.main.filename === __filename) {
-  /**
-   * Pre-loading staff
-   */
-  Manager.checkUserOS()
-
   /**
    * This is where all the magic happens
    */

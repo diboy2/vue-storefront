@@ -1,48 +1,125 @@
-# About
 
-<a href="https://travis-ci.org/DivanteLtd/vue-storefront"><img src="https://travis-ci.org/DivanteLtd/vue-storefront.svg?branch=master" alt="build:passed"></a>
-![version](https://img.shields.io/badge/node-v8.x-blue.svg)
-![Branch stable](https://img.shields.io/badge/stable%20branch-master-blue.svg)
-![Branch Develop](https://img.shields.io/badge/dev%20branch-develop-blue.svg)
-<a href="https://join.slack.com/t/vuestorefront/shared_invite/enQtMzA4MTM2NTE5NjM2LTI1M2RmOWIyOTk0MzFlMDU3YzJlYzcyYzNiNjUyZWJiMTZjZjc3MjRlYmE5ZWQ1YWRhNTQyM2ZjN2ZkMzZlNTg">![Branch Develop](https://img.shields.io/badge/community%20chat-slack-FF1493.svg)</a>
+# Introduction to Vue Storefront
 
-Vue Storefront is a standalone PWA storefront for your eCommerce, possible to connect with any eCommerce backend (eg. Magento, <a href="https://github.com/DivanteLtd/pimcore2vuestorefront">Pimcore</a>, Prestashop or Shopware) through the API.
+Vue Storefront is a rather complex solution with a lot of possibilities. Learning all of them can take some time. In this introduction, we will learn all of its crucial concepts in a few minutes, which is enough to start playing with [Vue Storefront](https://www.vuestorefront.io/).
 
-Vue Storefront is and always will be in the open source. Anyone can use and support the project, we want it to be a tool for the improvement of the shopping experience.
-The project is in the **production ready** phase.
 
-## Video demo
+## What is Vue Storefront
+![Vue Storefront](https://cdn-images-1.medium.com/max/1600/0*X7cXhVkWidbWFrbM)
 
-<p style="text-align: center;">
-  <a href="https://www.youtube.com/watch?v=L4K-mq9JoaQ" target="_blank">
-    <img :src="$withBase('/vs-video.png')" alt="See how it works">
-  </a>
-</p>
+Vue Storefront is a headless and backend-agnostic eCommerce [Progressive Web App (PWA)](https://developers.google.com/web/progressive-web-apps/) written in Vue.js. The fact that it's using headless architecture allows Vue Storefront to connect with any eCommerce platform so it can be a frontend PWA for Magento, Shopify, BigCommerce, WooCommerce and etc.
 
-## Technical Webcast #1 - demo and the architecture
+ It's a very popular [Open Source project](https://github.com/DivanteLtd/vue-storefront) with a strong and growing community.
+ 
+**Key features of Vue Storefront:**
+- Platform-agnostic
+- Focus on performance
+- Mobile-first approach
+- Cutting-edge tech
+- No limitations in theming and customization
+- Open Source with MIT license
+- Exciting developer experience
+- Out-of-the-box Server Side Rendering (for SEO)
+- Offline mode
 
-<p style="text-align: center;">
-  <a href="https://www.youtube.com/watch?v=sRSmEP4jva0&feature=youtu.be" target="_blank">
-    <img :src="$withBase('/video-webcast-1.png')" alt="Demo and the architecture of Vue Storefront">
-  </a>
-</p>
 
-- [Read on how to integrate it with Magento2](https://medium.com/@piotrkarwatka/vue-storefront-how-to-install-and-integrate-with-magento2-227767dd65b2),
-- [Read how to create Vue Storefront theme](https://medium.com/@frakowski/developing-themes-in-vue-storefront-backend-agnostic-ecommerce-pwa-frontend-part-1-72ea3c939593),
-- [Read the interviews with authors of first production deployments](https://medium.com/@piotrkarwatka/vue-storefront-on-production-interview-with-gogetgold-com-developers-71e4b48ef996)
+## How does it connect with backend platforms?
+Vue Storefront manages to be platform-agnostic thanks to the [vue-storefront-api](https://github.com/DivanteLtd/vue-storefront-api) and [dedicated API connectors](https://github.com/DivanteLtd/vue-storefront#integrations) for eCommerce backend platforms. The data format in vue-storefront-api is always the same for any platform, which means no matter what eCommerce backend you use, your frontend remains the same without any change.
 
-## Is it production ready?
+It's a great strategy for migrations since you can easily migrate from one platform to another (or one version to another, e.g. Magento 1 to 2) without touching your frontend.
 
-Yes! There are more than 10 implementations happening right now and one live shop.
 
-## Join the community on Slack
+![Architecture diagram](https://raw.githubusercontent.com/DivanteLtd/vue-storefront/master/docs/.vuepress/public/GitHub-Architecture-VS.png)
 
-If you have any questions or ideas feel free to join our slack: https://vuestorefront.slack.com via [invitation link](https://join.slack.com/t/vuestorefront/shared_invite/enQtMzA4MTM2NTE5NjM2LTI1M2RmOWIyOTk0MzFlMDU3YzJlYzcyYzNiNjUyZWJiMTZjZjc3MjRlYmE5ZWQ1YWRhNTQyM2ZjN2ZkMzZlNTg)
+The API connector works in two phases:
+- **data pump** ([mage2nosql](https://github.com/DivanteLtd/mage2vuestorefront) in the image)  is pulling static data (catalog, orders, etc.) from your eCommerce platform to Vue Storefront Elasticsearch and changes its format to the one consumed by vue-storefront-api. Once finished pulling the data, you can display the product catalog in Vue Storefront. After pumping the data into Elasticsearch is done, it will stay in sync with changes made on the backend platform and update its content accordingly.
 
-## Roadmap
+- **worker pool** is a synchronization process of so-called dynamic calls (user sessions, cart rules, etc.) that couldn't be stored in the database and need to be called by vue-storefront-api directly from the backend platform.
 
-We are planning 1-2 milestones ahead. Our milestones are based on requirements from community, partners and production implementations.
+VueStorefront works seamlessly with your backend platform while two integration phases are managed as above.
 
-[See the roadmap](https://github.com/DivanteLtd/vue-storefront/milestones).
+Some of the most popular backend platforms already have their integrations ([Magento 2](https://github.com/DivanteLtd/mage2vuestorefront), [Magento 1](https://github.com/DivanteLtd/magento1-vsbridge), [CoreShop](https://github.com/DivanteLtd/coreshop-vsbridge), [BigCommerce](https://github.com/DivanteLtd/bigcommerce2vuestorefront), [WooCommerce](https://github.com/DivanteLtd/woocommerce2vuestorefront)), but you can easily make your own with the [integration boilerplate](https://github.com/DivanteLtd/vue-storefront-integration-boilerplate).
 
-[Check the feature list of 1.0](../basics/feature-list.md).
+The blue parts on the diagram are responsible for offline cache and will be explained later in the article.
+
+## How does it work?
+
+There are 3 concepts you need to be familiar with while working with Vue Storefront.
+
+- **Vue Storefront Core** ( `core` folder) is the glue for all the features that allow Vue Storefront to work. It contains all the entry points, SSR behavior, build process, in-app libs and helpers. You shouldn't touch this folder directly when building your own implementations in order to stay up-to-date with its features and security.
+
+- **Vue Storefront Modules** ( `core/modules` and `src/modules` ) are the eCommerce features. Each module is one encapsulated feature (like cart, wishlist, catalog, and some third-party integrations). You can add/remove/edit these modules as you wish and compose your Vue Storefront shop with only the features that you need. They are also used for 3rd-party extensions.
+
+- **Vue Storefront Themes** ( `src/themes` ) are the actual shop implementation. In themes, you can use and extend all the logic from registered modules / core and add your HTML markup and styles. Vue Storefront provides a fully customizable default theme.
+
+To summarize: Your shop is basically a Vue Storefront theme that uses features provided by modules. Vue Storefront Core glues it all together.
+
+Knowing these 3 concepts allows you to confidently work with Vue Storefront and make your own shops.
+
+Useful materials: [Vue Storefront project structure](https://docs.vuestorefront.io/guide/basics/project-structure.html)
+
+## Installing Vue Storefront
+When you want to play with Vue Storefront, there are three options:
+
+![install](https://cdn-images-1.medium.com/max/1200/0*dz-mwiEQ_Qkzpd5H)
+*This is everything you need to have VS working with our demo backend.*
+
+- You can set up the frontend connected to our demo backend platform (best for trying out Vue Storefront).
+- You can set up frontend with your own `vue-storefront-api` and database dumped from the demo.
+- You can set up frontend with `vue-storefront-api` connected to your eCommerce backend.
+
+To do any of this, simply type `yarn installer` in the root of the project and answer the questions in the console. Once the installation is done, type `yarn dev` to run your project (by default, on port `3000`). No matter what option you choose, you can change the settings in the config file later.
+
+## Vue Storefront config file
+
+Most of the Vue Storefront configuration (like the active theme, backend API addresses, multistore setup, etc.) is done through its [config](https://docs.vuestorefront.io/guide/basics/configuration.html) file that can be found under the `config` folder. The `default.json` file contains all the default setup.
+
+For your own implementation you should create a `local.json` file in the same directory and include fields from `default.json` that you want to override. These two files will be merged in favor of `local.json` during the build process. If you use the installer to set up your Vue Storefront instance, it'll generate proper config files.
+
+## Building themes in Vue Storefront
+![themes structure](https://cdn-images-1.medium.com/max/1200/1*jMel95nhs5UTIi2DQdeq4Q.png)
+
+While making themes in Vue Storefront, in most cases, all you need to do is create your own HTML and CSS markup. All the required business logic is exposed by the core with its core modules and can be easily injected into any of the theme components. 
+![biz-logic](https://cdn-images-1.medium.com/max/1200/1*tMwC0smduKIwKh82jTiJmw.png)
+*The business logic from the core component can be easily injected into any theme component as a Vue.js mixin.*
+
+The mechanism of injecting core business logic into themes is ridiculously simple. We are using [Vue.js mixins](https://vuejs.org/v2/guide/mixins.html) to maintain business logic upgradable in the core.
+
+So assume we have a core Microcart component with business logic as above (left side), we can easily inject it into any of our theme components (right side) just by importing it and adding as a mixin `mixins: [Microcart]`. This is all you need to make use of core business logic inside your theme. With this approach, we can easily ship updates to all core components without breaking your shop.
+
+The easiest way to create your own theme is to create a copy of the default one, change its name in its `package.json` file, change the active theme in `config/local.json` and run `yarn` to make [Lerna](https://github.com/lerna/lerna) linking (which we use for monorepos).
+
+## Offline mode and cache
+Vue Storefront still works even while the user is offline.
+
+We managed to do this by making extensive use of the browser cache. 
+- **For the static assets** (only prod) we use the [sw-precache](https://github.com/GoogleChromeLabs/sw-precache) plugin (config can be found in `core/build/webpack.prod.sw.config.js` ). They are cached in Service Worker and can be inspected under the `Application/Cache Storage` tab of your Developer Tools.
+
+![cache](https://cdn-images-1.medium.com/max/1200/1*BHVzt7oCIxcM3bNPZriKmw.png)
+*Here you can find cached static assets. Please notice that Service Worker works only in production mode.*
+
+:::warning
+Please note that Service Worker works only in production mode.
+:::
+
+- **For the catalog and store-data cache** we use IndexedDB and Local Storage. We also prefetch products from visited categories so once you enter one, all of its products are available offline. The mechanism of offline storage is located under `core/lin./storage`.
+
+We use some of the cached data even while the user is online to display the content instantly. This explains why Vue Storefront is lightning fast.
+
+
+## What else
+You may not believe me but this is all you need to know to start working with Vue Storefront! Once you are done wrapping your head around the basics, just look around docs and visit community [slack](https://vuestorefront.slack.com) to dig deeper into the project.
+
+## Useful Links
+
+- [Documentation](https://docs.vuestorefront.io/)
+- [Community slack invitation link](https://join.slack.com/t/vuestorefront/shared_invite/enQtMzA4MTM2NTE5NjM2LTI1M2RmOWIyOTk0MzFlMDU3YzJlYzcyYzNiNjUyZWJiMTZjZjc3MjRlYmE5ZWQ1YWRhNTQyM2ZjN2ZkMzZlNTg)
+- [Project structure explained](https://docs.vuestorefront.io/guide/basics/project-structure.html)
+- [Configuration file explained](https://docs.vuestorefront.io/guide/basics/configuration.html)
+- [Extending Vue Storefront](https://docs.vuestorefront.io/guide/extensions/introduction.html)
+- [How to contribute](https://docs.vuestorefront.io/guide/basics/contributing.html#branches)
+
+## Video with training
+You can also watch a video recording from 4th Vue Storefront hackathon with free introduction training
+
+[![0.jpg](http://img.youtube.com/vi/IL2HMtvf_hw/0.jpg)](https://youtu.be/IL2HMtvf_hw)
